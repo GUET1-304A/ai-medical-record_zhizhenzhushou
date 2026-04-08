@@ -31,12 +31,12 @@
       </el-button>
     </div>
 
-    <!-- 新增：WAV 文件上传区域 -->
-    <el-divider>或上传 WAV 文件</el-divider>
+    <!-- 新增：MP3 文件上传区域 -->
+    <el-divider>或上传 MP3 文件</el-divider>
     <div class="upload-controls">
-      <input type="file" ref="fileInput" @change="handleFileChange" accept="audio/wav" style="display: none;">
+      <input type="file" ref="fileInput" @change="handleFileChange" accept="audio/mp3" style="display: none;">
       <el-button type="info" @click="triggerFileInput">
-        选择 WAV 文件
+        选择 MP3 文件
       </el-button>
       <span v-if="selectedFile">{{ selectedFile.name }}</span>
       <el-button 
@@ -46,7 +46,7 @@
         :disabled="!selectedFile"
         style="margin-left: 10px;"
       >
-        上传并转写 WAV
+        上传并转写 MP3
       </el-button>
     </div>
     <!-- 结束新增 -->
@@ -55,7 +55,7 @@
       <h4>转写结果：</h4>
       <el-input
         type="textarea"
-        :rows="5"
+        :rows="20"
         v-model="transcribedText"
         placeholder="语音转写结果将显示在这里..."
         readonly
@@ -64,7 +64,7 @@
     <div v-else class="transcribed-text-placeholder">
       <p>点击“开始录音”按钮，开始您的问诊对话，完成后点击“停止录音”。</p>
       <p>系统会将录音内容转换为文字，并自动填充到下方的文本框中。</p>
-      <p>您也可以通过“选择 WAV 文件”按钮直接上传本地 WAV 音频进行转写。</p>
+      <p>您也可以通过“选择 MP3 文件”按钮直接上传本地 MP3 音频进行转写。</p>
     </div>
 
     <el-dialog
@@ -106,7 +106,6 @@ import { Microphone, VideoPause, Upload } from '@element-plus/icons-vue';
 
 // 录音相关状态
 let mediaStream = null; // 用于存储媒体流对象
-const mediaRecorder = ref(null); // MediaRecorder 实例
 const audioChunks = ref([]); // 存储录音数据块
 const isRecording = ref(false); // 录音状态
 const transcribedText = ref(''); // 转写结果
@@ -138,11 +137,7 @@ const uploadAudio = async (audioData, fileName) => {
     // audioData 可以是 Blob (来自录音) 也可以是 File (来自文件选择)
     formData.append('audio', audioData, fileName);
 
-    const response = await axios.post('http://127.0.0.1:5000/transcribe-audio', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
+    const response = await axios.post('http://127.0.0.1:5000/transcribe-audio', formData);
 
     transcribedText.value = response.data.transcribedText;
     ElMessage.success('语音转写成功！');
@@ -174,66 +169,164 @@ const startRecording = async () => {
   audioChunks.value = []; // 清空之前的录音数据块
   selectedFile.value = null; // 清空选中的文件
   try {
+    console.log('开始请求麦克风权限...');
     // 请求麦克风权限
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    console.log('麦克风权限获取成功:', mediaStream);
 
-    // 尝试优先使用 audio/webm;codecs=opus 格式，因为它在现代浏览器中通常效果最好
-    const preferredMimeType = 'audio/webm;codecs=opus';
-    let mediaRecorderOptions = {};
-
-    if (MediaRecorder.isTypeSupported(preferredMimeType)) {
-      mediaRecorderOptions = { mimeType: preferredMimeType };
-      console.log(`浏览器支持录制 ${preferredMimeType} 格式。`);
-    } else if (MediaRecorder.isTypeSupported('audio/webm')) {
-      // 如果不支持带 Opus 编解码器的 WebM，则尝试通用 WebM 格式
-      mediaRecorderOptions = { mimeType: 'audio/webm' };
-      console.warn(`浏览器不支持录制 ${preferredMimeType} 格式，将尝试 audio/webm。`);
-      ElMessage.warning(`您的浏览器可能不支持直接录制 ${preferredMimeType} 格式。转写可能会失败，请联系管理员。`);
-    } else {
-      // 如果都不支持，则回退到浏览器默认格式
-      console.warn(`浏览器不支持录制 ${preferredMimeType} 或 audio/webm。将使用默认格式。`);
-      ElMessage.warning(`您的浏览器可能不支持常见的音频录制格式。转写可能会失败，请联系管理员。`);
+    // 检查音频上下文是否被暂停
+    let audioContext;
+    try {
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      console.log('音频上下文创建成功:', audioContext);
+    } catch (contextErr) {
+      console.error('创建音频上下文失败:', contextErr);
+      ElMessage.error('创建音频上下文失败，请检查浏览器兼容性。');
+      return;
     }
     
-    // 初始化 MediaRecorder，并根据支持的 MIME 类型设置选项
-    mediaRecorder.value = new MediaRecorder(mediaStream, mediaRecorderOptions);
+    // 检查音频上下文状态
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+      console.log('音频上下文已恢复');
+    }
 
-    mediaRecorder.value.ondataavailable = (event) => {
-      audioChunks.value.push(event.data);
-    };
-
-    mediaRecorder.value.onstop = async () => {
-      isRecording.value = false; // 录音状态设为 false
-      // 停止媒体流轨道，释放麦克风资源
+    try {
+      // 使用MediaRecorder API作为替代方案，更兼容现代浏览器
+      console.log('尝试使用MediaRecorder API...');
+      
+      // 检查浏览器是否支持MediaRecorder
+      if (!window.MediaRecorder) {
+        throw new Error('浏览器不支持MediaRecorder API');
+      }
+      
+      // 尝试找到支持的音频格式
+      let mimeType = 'audio/mp3';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        // 如果不支持MP3，尝试其他格式
+        const supportedTypes = [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/ogg;codecs=opus',
+          'audio/ogg'
+        ];
+        
+        for (const type of supportedTypes) {
+          if (MediaRecorder.isTypeSupported(type)) {
+            mimeType = type;
+            console.log(`使用支持的音频格式: ${mimeType}`);
+            break;
+          }
+        }
+      }
+      
+      // 创建MediaRecorder实例
+      const mediaRecorder = new MediaRecorder(mediaStream, { mimeType });
+      console.log('MediaRecorder创建成功:', mediaRecorder);
+      
+      // 存储录音数据
+      const audioChunks = [];
+      
+      // 处理数据可用事件
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+          console.log('收到音频数据，大小:', event.data.size);
+        }
+      };
+      
+      // 处理录音结束事件
+      mediaRecorder.onstop = async () => {
+        console.log('录音停止，开始处理音频数据...');
+        
+        // 创建音频Blob
+        const audioBlob = new Blob(audioChunks, { type: mimeType });
+        console.log('音频Blob创建成功，大小:', audioBlob.size);
+        
+        // 调用上传函数处理音频数据
+        await uploadAudio(audioBlob, 'recording.webm');
+        console.log('音频上传完成');
+      };
+      
+      // 开始录音
+      mediaRecorder.start();
+      console.log('录音开始成功');
+      
+      isRecording.value = true;
+      ElMessage.success('开始录音...');
+      
+      // 保存recorder和数据，以便在停止录音时使用
+      window.recordingData = {
+        mediaRecorder,
+        mediaStream,
+        audioContext
+      };
+    } catch (audioErr) {
+      console.error('音频处理初始化失败:', audioErr);
+      ElMessage.error(`音频处理初始化失败: ${audioErr.message}`);
+      // 清理媒体流
       if (mediaStream) {
         mediaStream.getTracks().forEach(track => track.stop());
       }
-      
-      // 使用 MediaRecorder 实际录制到的 MIME 类型来创建 Blob，确保类型匹配
-      const audioBlob = new Blob(audioChunks.value, { type: mediaRecorder.value.mimeType });
-      
-      // 调用上传函数处理音频数据
-      // 文件名使用默认的 recording.webm
-      await uploadAudio(audioBlob, 'recording.webm'); 
-    };
-
-    mediaRecorder.value.start(); // 开始录音
-    isRecording.value = true; // 更新录音状态
-    ElMessage.success('开始录音...');
+    }
   } catch (err) {
     console.error('无法访问麦克风或录音失败:', err);
-    ElMessage.error('无法开始录音，请检查麦克风权限或设备。');
+    // 更详细的错误信息
+    if (err.name === 'NotAllowedError') {
+      ElMessage.error('麦克风权限被拒绝，请在浏览器设置中允许麦克风访问。');
+    } else if (err.name === 'NotFoundError') {
+      ElMessage.error('未找到麦克风设备，请检查设备连接。');
+    } else if (err.name === 'NotReadableError') {
+      ElMessage.error('麦克风设备被占用，请关闭其他使用麦克风的应用。');
+    } else {
+      ElMessage.error(`无法开始录音: ${err.message}`);
+    }
   }
 };
 
 /**
- * 停止录音 (此函数仅停止录音，实际上传逻辑在 mediaRecorder.onstop 事件中)
+ * 停止录音
  */
-const stopRecording = () => {
-  if (mediaRecorder.value && isRecording.value) {
-    mediaRecorder.value.stop(); // 调用 stop() 会触发 onstop 事件
-    // isRecording.value 会在 onstop 回调中更新
-    // 加载提示会在 uploadAudio 函数中处理
+const stopRecording = async () => {
+  if (isRecording.value && window.recordingData) {
+    console.log('开始停止录音...');
+    const { mediaRecorder, mediaStream, audioContext } = window.recordingData;
+    
+    // 停止录音
+    isRecording.value = false;
+    console.log('录音状态已更新为停止');
+    
+    try {
+      // 停止MediaRecorder
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+        console.log('MediaRecorder已停止');
+      }
+      
+      // 停止媒体流
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        console.log('媒体流已停止');
+      }
+      
+      // 关闭音频上下文
+      if (audioContext) {
+        await audioContext.close();
+        console.log('音频上下文已关闭');
+      }
+      
+      ElMessage.success('录音已停止，正在处理音频数据...');
+    } catch (stopErr) {
+      console.error('停止录音时出错:', stopErr);
+      ElMessage.error('停止录音时出错，请重试。');
+    } finally {
+      // 清理
+      delete window.recordingData;
+      console.log('录音数据已清理');
+    }
+  } else {
+    console.warn('没有正在进行的录音');
+    ElMessage.warning('没有正在进行的录音');
   }
 };
 
@@ -250,18 +343,33 @@ const triggerFileInput = () => {
  */
 const handleFileChange = (event) => {
   const file = event.target.files[0];
-  if (file && file.type === 'audio/wav') {
-    selectedFile.value = file;
-    transcribedText.value = ''; // 清空之前的转写结果
-    ElMessage.info(`已选择文件: ${file.name}`);
-  } else {
+  if (!file) {
     selectedFile.value = null;
-    ElMessage.error('请选择一个 WAV 格式的音频文件。');
+    return;
   }
+  
+  // 检查文件格式
+  if (!file.type === 'audio/mp3' && !file.name.endsWith('.mp3')) {
+    selectedFile.value = null;
+    ElMessage.error('请选择一个 MP3 格式的音频文件。');
+    return;
+  }
+  
+  // 检查文件大小（限制为10MB）
+  const maxSize = 10 * 1024 * 1024; // 10MB
+  if (file.size > maxSize) {
+    selectedFile.value = null;
+    ElMessage.error('文件大小不能超过10MB。');
+    return;
+  }
+  
+  selectedFile.value = file;
+  transcribedText.value = ''; // 清空之前的转写结果
+  ElMessage.info(`已选择文件: ${file.name}`);
 };
 
 /**
- * 上传选中的 WAV 文件
+ * 上传选中的 MP3 文件
  */
 const uploadSelectedFile = async () => {
   if (selectedFile.value) {

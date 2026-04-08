@@ -3,26 +3,52 @@
     <el-card class="login-card">
       <template #header>
         <div class="card-header">
-          <span>智诊助手登录</span>
+          <span>{{ isLogin ? '智诊助手登录' : '智诊助手注册' }}</span>
         </div>
       </template>
-      <el-form :model="loginForm" :rules="rules" ref="loginFormRef" label-width="80px">
+      <el-form :model="form" :rules="rules" ref="formRef" label-width="80px">
         <el-form-item label="用户名" prop="username">
-          <el-input v-model="loginForm.username" placeholder="请输入用户名"></el-input>
+          <el-input v-model="form.username" placeholder="请输入用户名"></el-input>
+        </el-form-item>
+        <el-form-item v-if="!isLogin" label="邮箱" prop="email">
+          <el-input v-model="form.email" placeholder="请输入邮箱"></el-input>
         </el-form-item>
         <el-form-item label="密码" prop="password">
-          <el-input type="password" v-model="loginForm.password" placeholder="请输入密码"></el-input>
+          <el-input 
+            :type="showPassword ? 'text' : 'password'" 
+            v-model="form.password" 
+            placeholder="请输入密码"
+            :suffix-icon="showPassword ? 'el-icon-view' : 'el-icon-view'
+          " @click-suffix="showPassword = !showPassword"></el-input>
+          <div v-if="!isLogin" class="password-strength">
+            <div class="strength-text">密码强度: {{ getStrengthText(passwordStrength) }}</div>
+            <div class="strength-bar">
+              <div :class="['strength-level', 'strength-' + passwordStrength]"></div>
+            </div>
+          </div>
         </el-form-item>
-        <el-form-item label="验证码" prop="verifyCode">
+        <el-form-item v-if="!isLogin" label="确认密码" prop="confirmPassword">
+          <el-input 
+            :type="showConfirmPassword ? 'text' : 'password'" 
+            v-model="form.confirmPassword" 
+            placeholder="请确认密码"
+            :suffix-icon="showConfirmPassword ? 'el-icon-view' : 'el-icon-view'
+          " @click-suffix="showConfirmPassword = !showConfirmPassword"></el-input>
+        </el-form-item>
+        <el-form-item v-if="isLogin" label="验证码" prop="verifyCode">
           <div class="verify-code-wrapper">
-            <el-input v-model="loginForm.verifyCode" placeholder="请输入验证码" class="verify-code-input"></el-input>
+            <el-input v-model="form.verifyCode" placeholder="请输入验证码" class="verify-code-input"></el-input>
             <VueCanvasVerify ref="canvasVerifyRef" @getCode="handleCodeChange"
                              :width="120" :height="40" class="canvas-verify-code"></VueCanvasVerify>
           </div>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="handleLogin">登录</el-button>
-          <el-button @click="handleRegister">注册</el-button>
+          <el-button type="primary" @click="handleSubmit" :loading="loading">{{ isLogin ? '登录' : '注册' }}</el-button>
+        </el-form-item>
+        <el-form-item class="form-switch">
+          <span v-if="isLogin">没有账号？</span>
+          <span v-else>已有账号？</span>
+          <el-button type="text" @click="toggleForm">{{ isLogin ? '立即注册' : '立即登录' }}</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -30,52 +56,85 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'; // 移除 onMounted, 因为 VueCanvasVerify 不依赖它进行外部控制
+import { ref, reactive, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import VueCanvasVerify from '../components/VueCanvasVerify.vue'; // 导入自定义组件
+import VueCanvasVerify from '../components/VueCanvasVerify.vue';
 
 const router = useRouter();
-const loginFormRef = ref(null);
-const canvasVerifyRef = ref(null); // 引用自定义验证码组件实例
+const formRef = ref(null);
+const canvasVerifyRef = ref(null);
+const isLogin = ref(true);
+const showPassword = ref(false);
+const showConfirmPassword = ref(false);
+const loading = ref(false);
+const currentVerifyCode = ref('');
 
-const loginForm = reactive({
+const form = reactive({
   username: '',
+  email: '',
   password: '',
-  verifyCode: '' // 用户输入的验证码
+  confirmPassword: '',
+  verifyCode: ''
 });
 
-const currentVerifyCode = ref(''); // 存储当前组件生成的验证码
-
-// 验证码组件通过 @getCode 事件将生成的验证码传递过来
-const handleCodeChange = (code) => {
-  currentVerifyCode.value = code;
-  console.log('VueCanvasVerify 通过 @getCode 触发，新验证码:', currentVerifyCode.value);
-};
+const passwordStrength = computed(() => {
+  const password = form.password;
+  if (!password) return 0;
+  let strength = 0;
+  if (password.length >= 8) strength++;
+  if (/[A-Z]/.test(password)) strength++;
+  if (/[a-z]/.test(password)) strength++;
+  if (/[0-9]/.test(password)) strength++;
+  if (/[^A-Za-z0-9]/.test(password)) strength++;
+  return strength;
+});
 
 const rules = {
   username: [
     { required: true, message: '请输入用户名', trigger: 'blur' },
     { min: 3, max: 15, message: '长度在 3 到 15 个字符', trigger: 'blur' }
   ],
+  email: [
+    { required: true, message: '请输入邮箱', trigger: 'blur' },
+    { type: 'email', message: '请输入正确的邮箱格式', trigger: 'blur' }
+  ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, max: 20, message: '长度在 6 到 20 个字符', trigger: 'blur' }
+    { min: 8, max: 20, message: '长度在 8 到 20 个字符', trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        if (!/(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])(?=.*[^A-Za-z0-9])/.test(value)) {
+          callback(new Error('密码必须包含大小写字母、数字和特殊字符'));
+        } else {
+          callback();
+        }
+      },
+      trigger: 'blur'
+    }
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认密码', trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        if (value !== form.password) {
+          callback(new Error('两次输入的密码不一致'));
+        } else {
+          callback();
+        }
+      },
+      trigger: 'blur'
+    }
   ],
   verifyCode: [
     { required: true, message: '请输入验证码', trigger: 'blur' },
     {
       validator: (rule, value, callback) => {
-        console.log('校验中 - 用户输入:', value, ' 小写:', value.toLowerCase());
-        console.log('校验中 - 生成验证码:', currentVerifyCode.value, ' 小写:', currentVerifyCode.value.toLowerCase());
-
         if (!currentVerifyCode.value) {
-          // 如果 currentVerifyCode.value 为空，说明验证码没有被正确生成或获取
           callback(new Error('验证码未生成，请刷新页面或检查组件！'));
         } else if (value.toLowerCase() !== currentVerifyCode.value.toLowerCase()) {
           callback(new Error('验证码不正确'));
-          loginForm.verifyCode = ''; // 清空输入
-          // 注意：VueCanvasVerify 似乎没有外部刷新的方法，需要用户点击组件本身或者重新加载页面
+          form.verifyCode = '';
         } else {
           callback();
         }
@@ -85,32 +144,102 @@ const rules = {
   ]
 };
 
-// ... 在 handleLogin 方法内部
-const handleLogin = () => {
-  loginFormRef.value.validate(async (valid) => {
+const handleCodeChange = (code) => {
+  currentVerifyCode.value = code;
+};
+
+const toggleForm = () => {
+  isLogin.value = !isLogin.value;
+  // 重置表单
+  form.username = '';
+  form.email = '';
+  form.password = '';
+  form.confirmPassword = '';
+  form.verifyCode = '';
+  if (formRef.value) {
+    formRef.value.resetFields();
+  }
+};
+
+const getStrengthText = (strength) => {
+  switch (strength) {
+    case 0:
+      return '请输入密码';
+    case 1:
+      return '弱';
+    case 2:
+      return '较弱';
+    case 3:
+      return '中等';
+    case 4:
+      return '强';
+    case 5:
+      return '很强';
+    default:
+      return '';
+  }
+};
+
+const handleSubmit = () => {
+  formRef.value.validate(async (valid) => {
     if (valid) {
-      if (loginForm.username === '111' && loginForm.password === '123456') { // 模拟固定用户
-        ElMessage.success('登录成功！');
-        localStorage.setItem('token', 'test_token'); // 存储模拟 token
-        localStorage.setItem('username', loginForm.username); // <-- 新增：存储用户名
-        router.push('/index');
-      } else {
-        ElMessage.error('用户名或密码错误！');
-        loginForm.verifyCode = ''; // 清空验证码输入
+      loading.value = true;
+      try {
+        if (isLogin.value) {
+          // 登录逻辑
+          const response = await fetch('http://localhost:5000/api/login', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              username: form.username,
+              password: form.password
+            })
+          });
+          
+          const data = await response.json();
+          if (data.success) {
+            ElMessage.success('登录成功！');
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('username', data.username);
+            router.push('/index');
+          } else {
+            ElMessage.error(data.message || '登录失败！');
+          }
+        } else {
+          // 注册逻辑
+          const response = await fetch('http://localhost:5000/api/register', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              username: form.username,
+              email: form.email,
+              password: form.password
+            })
+          });
+          
+          const data = await response.json();
+          if (data.success) {
+            ElMessage.success('注册成功！请登录');
+            toggleForm();
+          } else {
+            ElMessage.error(data.message || '注册失败！');
+          }
+        }
+      } catch (error) {
+        ElMessage.error('网络错误，请稍后重试');
+        console.error(error);
+      } finally {
+        loading.value = false;
       }
     } else {
       ElMessage.error('请检查输入信息！');
-      if (loginForm.verifyCode && currentVerifyCode.value && loginForm.verifyCode.toLowerCase() !== currentVerifyCode.value.toLowerCase()) {
-         loginForm.verifyCode = '';
-      }
       return false;
     }
   });
-};
-
-const handleRegister = () => {
-  ElMessage.info('请联系管理员进行注册或访问注册页面');
-  console.log('跳转到注册页面或显示注册表单');
 };
 </script>
 
@@ -141,13 +270,37 @@ const handleRegister = () => {
 .verify-code-input {
   flex-grow: 1;
 }
-/* 自定义验证码组件的样式 */
 .canvas-verify-code {
-  width: 120px; /* 验证码图片宽度 */
-  height: 40px; /* 验证码图片高度 */
-  cursor: pointer; /* 表示可点击刷新 */
-  border: 1px solid #dcdfe6; /* 可选的边框，使其更明显 */
-  border-radius: 4px; /* 可选的圆角 */
-  background-color: #f5f5f5; /* 添加背景色，确保可见 */
+  width: 120px;
+  height: 40px;
+  cursor: pointer;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  background-color: #f5f5f5;
 }
+.form-switch {
+  text-align: center;
+  margin-top: 10px;
+}
+.password-strength {
+  margin-top: 5px;
+  font-size: 12px;
+}
+.strength-bar {
+  height: 4px;
+  background-color: #f0f0f0;
+  border-radius: 2px;
+  margin-top: 5px;
+  overflow: hidden;
+}
+.strength-level {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+.strength-1 { background-color: #ff4d4f; width: 20%; }
+.strength-2 { background-color: #faad14; width: 40%; }
+.strength-3 { background-color: #faad14; width: 60%; }
+.strength-4 { background-color: #52c41a; width: 80%; }
+.strength-5 { background-color: #52c41a; width: 100%; }
 </style>

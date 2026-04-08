@@ -1,0 +1,40 @@
+# 依赖包
+node_modules/
+
+# 构建输出
+dist/
+build/
+
+# 环境变量文件
+.env
+
+# 数据库文件
+*.db
+
+# 临时文件
+temp_audio_uploads/
+
+# 日志文件
+logs/
+*.log
+
+# 缓存文件
+*.cache
+
+# 编辑器配置
+.vscode/
+.idea/
+
+# 操作系统文件
+Thumbs.db
+.DS_Store
+
+# 测试文件
+test_*.py
+
+# Python依赖包
+__pycache__/
+*.pyc
+
+# 大文件
+*.whl
